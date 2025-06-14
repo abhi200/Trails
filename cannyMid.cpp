@@ -87,3 +87,71 @@ void FastCannyEdge(const uint8_t* gray, int width, int height, uint8_t* outMask,
 }
 
 } // extern "C"
+
+
+// ---------------- fast_canny_ui.cpp ---------------- #include <cstdint> #include <vector> #include <cmath> #include <cstring> #include <algorithm> #include <opencv2/imgproc.hpp> #include <opencv2/core.hpp> #include <opencv2/imgcodecs.hpp>
+
+extern "C" {
+
+struct Rect { int x, y, width, height; };
+
+void FastCannyEdge(const uint8_t* gray, int width, int height, uint8_t* outMask, uint8_t threshold = 50) { auto at = [&](int y, int x) -> uint8_t { return gray[y * width + x]; }; auto set = [&](int y, int x, uint8_t val) { outMask[y * width + x] = val; };
+
+std::vector<uint8_t> mag(width * height, 0);
+std::vector<uint8_t> dir(width * height, 0);
+
+for (int y = 1; y < height - 1; ++y) {
+    for (int x = 1; x < width - 1; ++x) {
+        int gx = 0, gy = 0;
+        gx += -1 * at(y - 1, x - 1) + 1 * at(y - 1, x + 1);
+        gx += -2 * at(y, x - 1)     + 2 * at(y, x + 1);
+        gx += -1 * at(y + 1, x - 1) + 1 * at(y + 1, x + 1);
+
+        gy += -1 * at(y - 1, x - 1) + -2 * at(y - 1, x) + -1 * at(y - 1, x + 1);
+        gy +=  1 * at(y + 1, x - 1) +  2 * at(y + 1, x) +  1 * at(y + 1, x + 1);
+
+        int magnitude = std::min(255, std::abs(gx) + std::abs(gy));
+        mag[y * width + x] = magnitude;
+        dir[y * width + x] = (std::abs(gx) > std::abs(gy)) ? 0 : 1;
+    }
+}
+
+for (int y = 1; y < height - 1; ++y) {
+    for (int x = 1; x < width - 1; ++x) {
+        uint8_t m = mag[y * width + x];
+        if (m < threshold) continue;
+        bool keep = false;
+        if (dir[y * width + x] == 0)
+            keep = m >= mag[y * width + (x - 1)] && m >= mag[y * width + (x + 1)];
+        else
+            keep = m >= mag[(y - 1) * width + x] && m >= mag[(y + 1) * width + x];
+        if (keep) set(y, x, 255);
+    }
+}
+
+}
+
+int ExtractRectsFromEdgeMask(const uint8_t* edgeMask, int width, int height, Rect* outRects, int maxRects, float minArea = 100.0f, float minAspect = 0.3f, float maxAspect = 3.0f, float minSolidity = 0.5f) { cv::Mat mask(height, width, CV_8UC1, (void*)edgeMask); std::vector<std::vectorcv::Point> contours; cv::findContours(mask.clone(), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+int count = 0;
+for (const auto& contour : contours) {
+    float area = cv::contourArea(contour);
+    if (area < minArea) continue;
+
+    cv::Rect bb = cv::boundingRect(contour);
+    float aspect = (float)bb.width / bb.height;
+    if (aspect < minAspect || aspect > maxAspect) continue;
+
+    float solidity = area / (bb.width * bb.height);
+    if (solidity < minSolidity) continue;
+
+    if (count < maxRects) {
+        outRects[count++] = { bb.x, bb.y, bb.width, bb.height };
+    }
+}
+return count;
+
+}
+
+} // extern "C"
+
