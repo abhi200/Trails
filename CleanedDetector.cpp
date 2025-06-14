@@ -2,13 +2,17 @@
 
 extern "C" {
 
-// --------- Struct --------- struct Rect { int x, y, width, height; };
+// --------- Struct ---------
+struct Rect { int x, y, width, height; };
 
-// --------- Gaussian Blur 3x3 --------- void GaussianBlur3x3(const uint8_t* input, int width, int height, uint8_t* output) { int kernel[3][3] = { {1, 2, 1}, {2, 4, 2}, {1, 2, 1} }; for (int y = 1; y < height - 1; ++y) { for (int x = 1; x < width - 1; ++x) { int sum = 0; for (int ky = -1; ky <= 1; ++ky) for (int kx = -1; kx <= 1; ++kx) sum += input[(y + ky) * width + (x + kx)] * kernel[ky + 1][kx + 1]; output[y * width + x] = sum / 16; // kernel weight sum = 16 } } }
+// --------- Gaussian Blur 3x3 ---------
+void GaussianBlur3x3(const uint8_t* input, int width, int height, uint8_t* output) { int kernel[3][3] = { {1, 2, 1}, {2, 4, 2}, {1, 2, 1} }; for (int y = 1; y < height - 1; ++y) { for (int x = 1; x < width - 1; ++x) { int sum = 0; for (int ky = -1; ky <= 1; ++ky) for (int kx = -1; kx <= 1; ++kx) sum += input[(y + ky) * width + (x + kx)] * kernel[ky + 1][kx + 1]; output[y * width + x] = sum / 16; // kernel weight sum = 16 } } }
 
-// --------- Quantize Angle --------- int QuantizeDirection(float angle) { angle = angle * 180.0f / 3.14159f; if (angle < 0) angle += 180; if ((angle >= 0 && angle < 22.5) || (angle >= 157.5 && angle <= 180)) return 0; else if (angle >= 22.5 && angle < 67.5) return 45; else if (angle >= 67.5 && angle < 112.5) return 90; else return 135; }
+// --------- Quantize Angle --------- 
+int QuantizeDirection(float angle) { angle = angle * 180.0f / 3.14159f; if (angle < 0) angle += 180; if ((angle >= 0 && angle < 22.5) || (angle >= 157.5 && angle <= 180)) return 0; else if (angle >= 22.5 && angle < 67.5) return 45; else if (angle >= 67.5 && angle < 112.5) return 90; else return 135; }
 
-// --------- Fast Canny Edge (Mid-tier) --------- void FastCannyEdge(const uint8_t* gray, int width, int height, uint8_t* outMask, uint8_t threshold = 50) { std::vector<uint8_t> blurred(width * height, 0); std::vector<float> mag(width * height, 0); std::vector<float> angle(width * height, 0);
+// --------- Fast Canny Edge (Mid-tier) --------- 
+void FastCannyEdge(const uint8_t* gray, int width, int height, uint8_t* outMask, uint8_t threshold = 50) { std::vector<uint8_t> blurred(width * height, 0); std::vector<float> mag(width * height, 0); std::vector<float> angle(width * height, 0);
 
 GaussianBlur3x3(gray, width, height, blurred.data());
 
