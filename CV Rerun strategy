@@ -1,0 +1,99 @@
+
+
+🧠 Key Principle
+
+You only rerun detection when it’s necessary.
+Necessity arises from:
+
+1. Scene Change: UI/layout/scene content has changed.
+
+
+2. Gaze Change: User starts gazing in a new region.
+
+
+3. Fixation Confirmed: Gaze is stable long enough to consider a target.
+
+
+4. Temporal Threshold: Detection is considered stale after N frames.
+
+
+
+
+---
+
+🎯 Gaze-Based Object Detection Flow
+
+Step-by-step:
+
+1. Initial Frame
+
+Run full edge or object detection.
+
+Store results (segment texture / bounding boxes / contours).
+
+Wait for fixation.
+
+
+
+2. Frame-by-Frame
+
+If fixation is within a previously detected object → ✅ Reuse.
+
+If gaze is wandering → ❌ Don't rerun detection yet.
+
+If gaze enters a new region AND stays for N frames → 🔁 Rerun detection in that region only (ROI).
+
+If scene changes (e.g. UI refreshed) → 🔁 Rerun full detection.
+
+
+
+3. Trigger Conditions
+
+Fixation stabilized in new area.
+
+Scene/UI invalidated (manual flag or checksum diff).
+
+Gaze out of bounds from known target.
+
+
+
+
+
+---
+
+✅ When to Rerun Detection (per method)
+
+Method	Rerun When...
+
+Pixel color ID map	Only when scene changes or new objects appear.
+Bounding box reuse	Rerun if gaze exits all known boxes for N frames.
+ROI processing	Rerun in that region when gaze moves and stabilizes.
+Contour tracking	Rerun if shapes drift or object identity becomes unclear.
+Fixation buffer	Triggers detection only when fixation occurs.
+Segment texture caching	Only rerun if hash or checksum of image frame changes.
+Frame delta check	Detects subtle changes → rerun detection if diff is high.
+
+
+
+---
+
+🔁 Re-run Strategy
+
+Frame	Gaze Stable?	Scene Changed?	Detection Action
+
+1	No	No	Reuse previous data
+2	No	No	Reuse
+3	Yes (in ROI)	No	Rerun in ROI
+10	Yes (new UI)	Yes	Rerun full detection
+
+
+
+---
+
+🛠 Tip for Unity Integration
+
+Use gaze fixation logic (e.g., >300ms at same pixel region) before invoking native CV.
+
+Compare current camera-rendered buffer hash or mean difference before rerunning detection.
+
+Maintain a target history with a TTL (Time To Live) that forces recheck every N frames if untouched
