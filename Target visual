@@ -1,0 +1,160 @@
+# Gaze Pipeline Architecture: Resolving Interaction vs. Visible Shape Mismatch
+
+This document outlines the pipeline-level engineering solutions to fix the "Border Hover Glitch"—where an object is selected via its broad rectangular interaction bounds but fails to visually highlight due to a mismatched circular, capsule, or polygonal visual asset. 
+
+By implementing these fixes directly into the data routing pipeline, you ensure that the selection engine and the separate visual hover layer always remain perfectly synchronized without requiring raw gaze data exposure across a privacy wall.
+
+---
+
+## Approach 1: Unified Bounding Shape Pipeline
+**Best for:** Systems where the interaction bounds are meant to tightly track the true shape of the visual asset. 
+
+This approach completely replaces standard axis-aligned bounding boxes with **Normalized Distance-Bound Clamping (NDBC)** right where the object is registered.
+
+### The Pipeline Flow
+```text
+[Raw Gaze Point] ──► [Pipeline Clamp Engine] ──► [Unified Shape-Conformed Point] ──► Shared by BOTH Layers
+```
+
+### Core Implementation
+
+```javascript
+/**
+ * Main entry point for the input pipeline to normalize raw coordinates.
+ */
+function processPipelineGaze(gazePoint, targetObject) {
+    // 1. Transform raw gaze to local space relative to the object's center
+    let localX = gazePoint.x - targetObject.center.x;
+    let localY = gazePoint.y - targetObject.center.y;
+
+    // 2. Apply a shape-specific vector clamp directly to the coordinates
+    let clamped = applyUniversalShapeClamp(localX, localY, targetObject);
+
+    // 3. Transform the perfectly adjusted coordinate back to screen space
+    let finalX = targetObject.center.x + clamped.x;
+    let finalY = targetObject.center.y + clamped.y;
+
+    // 4. Update BOTH the selection engine and visual layer with this identical coordinate
+    return { x: finalX, y: finalY };
+}
+
+/**
+ * Core clamping math executing in invariant local space.
+ */
+function applyUniversalShapeClamp(x, y, object) {
+    switch(object.shape_type) {
+        case "RECTANGLE":
+            return {
+                x: Math.max(-object.extent.w, Math.min(x, object.extent.w)),
+                y: Math.max(-object.extent.h, Math.min(y, object.extent.h))
+            };
+
+        case "CIRCLE":
+            let dist = Math.sqrt(x * x + y * y);
+            let radius = object.extent.w; // Half-width acts as the radius
+            if (dist > radius) {
+                let scale = radius / dist;
+                return { x: x * scale, y: y * scale };
+            }
+            return { x: x, y: y };
+
+        case "CAPSULE":
+            let spineHalfLen = object.extent.w - object.extent.h; 
+            let closestSpineX = Math.max(-spineHalfLen, Math.min(x, spineHalfLen));
+            let dx = x - closestSpineX;
+            let dy = y; 
+            let cDist = Math.sqrt(dx * dx + dy * dy);
+            let capRadius = object.extent.h;
+            
+            if (cDist > capRadius) {
+                let cScale = capRadius / cDist;
+                return { x: closestSpineX + dx * cScale, y: dy * cScale };
+            }
+            return { x: x, y: y };
+            
+        default:
+            return { x: x, y: y };
+    }
+}
+```
+
+---
+
+## Approach 2: Proportional Dual-Geometry Mapping
+**Best for:** Systems where the interaction bounds are *intentionally* larger than the visual asset (e.g., using a huge, forgiving rectangular target zone for quick selection, but rendering a tight circular or capsule button).
+
+This approach acts as a geometric bridge, scaling the coordinate proportionally from the boundaries of the invisible interaction box down to the real contours of the visible asset.
+
+### The Pipeline Flow
+```text
+[Raw Gaze Point] ──► [Interaction Hitbox] ──► [Proportional Vector Clamp] ──► [Visible Border Projection]
+```
+
+### Core Implementation
+
+```javascript
+/**
+ * Resolves coordinates for disparate Interaction vs. Visible geometries.
+ */
+function applyDualShapeClamp(rawGaze, element) {
+    // 1. Move raw gaze into the element's local space (center is 0,0)
+    let localX = rawGaze.x - element.center.x;
+    let localY = rawGaze.y - element.center.y;
+
+    const interact = element.interactionShape; // e.g., RECTANGLE { extent: { w: 100, h: 100 } }
+    const visible = element.visibleShape;     // e.g., CIRCLE    { radius: 40 }
+
+    switch (visible.type) {
+        case "CIRCLE":
+            // Normalize the raw coordinate position relative to the interaction bounds
+            let normX = localX / interact.extent.w;
+            let normY = localY / interact.extent.h;
+            
+            // Calculate the absolute angular trajectory of the gaze from the center
+            let angle = Math.atan2(normY, normX);
+            let radialDist = Math.sqrt(localX * localX + localY * localY);
+            
+            if (radialDist <= visible.radius) {
+                // Safe Zone: Eye is within the visible circle. Trace raw movement.
+                return { x: localX, y: localY };
+            } else {
+                // Edge Clamping Zone: Eye is in the empty corner space.
+                // Project the angular trajectory perfectly onto the circumference line.
+                return {
+                    x: Math.cos(angle) * visible.radius,
+                    y: Math.sin(angle) * visible.radius
+                };
+            }
+
+        case "CAPSULE":
+            let spineHalfLen = visible.extent.w - visible.extent.h;
+            let closestSpineX = Math.max(-spineHalfLen, Math.min(localX, spineHalfLen));
+            
+            let dx = localX - closestSpineX;
+            let dy = localY; 
+            let distToSpine = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distToSpine <= visible.extent.h) {
+                return { x: localX, y: localY }; // Inside the visible pill shape
+            } else {
+                // Pin the hover graphic seamlessly onto the outer rounded cap borders
+                let scale = visible.extent.h / distToSpine;
+                return {
+                    x: closestSpineX + dx * scale,
+                    y: dy * scale
+                };
+            }
+
+        default:
+            return { x: localX, y: localY };
+    }
+}
+```
+
+---
+
+## Architectural Advantages
+
+1. **Privacy Invariant:** Both methods run entirely in local object space. They manipulate data **relative to the target element itself**, meaning they function perfectly even if the OS obfuscates or restricts global screen-space coordinates.
+2. **Eliminates UI Flickering:** By snapping points to the perimeter line when they enter the "dead corners," the visual layer always renders an active state, matching the selection engine's state flawlessly.
+3. **Low Computational Cost:** By substituting intensive geometric ray-casts with optimized vector projections (`scale = radius / distance`), these pipeline fixes run in constant time \(O(1)\) without utilizing heavy matrix or shader resources.
